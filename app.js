@@ -36,10 +36,13 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (ch) => HTML_ESCAPE[ch]);
 }
 
+let announceTimer = 0;
+
 function announce(message) {
   if (!announceEl) return;
+  window.clearTimeout(announceTimer);
   announceEl.textContent = '';
-  window.setTimeout(() => {
+  announceTimer = window.setTimeout(() => {
     announceEl.textContent = message;
   }, 30);
 }
@@ -90,10 +93,8 @@ function screen(options) {
     '<footer class="foot"><p>MTS Installations</p></footer>';
 
   window.scrollTo(0, 0);
-  if (busy) {
-    announce(title);
-    return;
-  }
+  announce(lede ? title + '. ' + lede : title);
+  if (busy) return;
   const heading = app.querySelector('h1');
   if (heading) {
     heading.tabIndex = -1;
