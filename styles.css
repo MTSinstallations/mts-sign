@@ -131,23 +131,12 @@ h1:focus-visible {
   background: var(--test);
   color: #111;
   text-align: center;
-  padding: calc(12px + env(safe-area-inset-top)) 16px 14px;
-  border-bottom: 4px solid #111;
-}
-
-.test-word {
-  margin: 0;
-  font-size: 2.35rem;
+  font-size: 0.8rem;
   font-weight: 800;
-  letter-spacing: 0.24em;
-  text-indent: 0.24em;
+  letter-spacing: 0.16em;
   line-height: 1;
-}
-
-.test-note {
-  margin: 6px 0 0;
-  font-size: 1rem;
-  font-weight: 700;
+  padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
+  border-bottom: 2px solid #111;
 }
 
 .mast {
@@ -534,10 +523,6 @@ a.btn-secondary {
     padding-left: 12px;
     padding-right: 12px;
   }
-
-  .test-word {
-    font-size: 2rem;
-  }
 }
 
 @media (max-height: 500px) and (orientation: landscape) {
@@ -586,4 +571,144 @@ a.btn-secondary {
   to {
     transform: rotate(360deg);
   }
+}
+
+.boot {
+  margin: 0;
+  padding: calc(28px + env(safe-area-inset-top)) 16px 16px;
+  font-weight: 700;
+}
+
+body.is-form {
+  background: #fff;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: calc(84px + env(safe-area-inset-bottom));
+}
+
+body.is-form:has(.test-banner) {
+  padding-top: 0;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+.sheets {
+  width: min(480px, 100%);
+  margin: 0 auto;
+}
+
+.sheet {
+  position: relative;
+  width: 100%;
+  background: #fff;
+  overflow: hidden;
+}
+
+.page-image {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.overlay {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 0 2px;
+  color: #111;
+  pointer-events: none;
+}
+
+.overlay .fit {
+  white-space: nowrap;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 400;
+  line-height: 1;
+  font-size: 10px;
+}
+
+.overlay.is-signature {
+  background: rgba(255, 214, 64, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(160, 110, 0, 0.45);
+}
+
+.overlay.is-signature.filled {
+  background: transparent;
+  box-shadow: none;
+}
+
+.overlay img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: left center;
+  display: block;
+}
+
+.sign-bar {
+  position: fixed;
+  z-index: 25;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(480px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fff;
+  border-top: 1px solid #d5dde6;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  box-shadow: 0 -6px 18px rgba(16, 40, 63, 0.08);
+}
+
+.sign-bar .form-error {
+  margin-top: 0;
+}
+
+.pad-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #f3f5f8;
+  padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom));
+}
+
+.pad-modal[hidden] {
+  display: none;
+}
+
+.pad-modal h2 {
+  font-size: 1.15rem;
+}
+
+.pad-modal .pad {
+  flex: 1;
+  height: auto;
+  min-height: 220px;
+  margin-top: 0;
+}
+
+.pad-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pad-actions .row {
+  display: flex;
+  gap: 10px;
+}
+
+.pad-actions .row .btn {
+  flex: 1;
 }
