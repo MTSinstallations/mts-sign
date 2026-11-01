@@ -3,9 +3,10 @@
 // Point this at another host when production sign-off moves.
 const API_BASE = 'https://djduaqegxwjnmjlzjdor.supabase.co/functions/v1/test-signoff-sign';
 
-const STATEMENT = 'I confirm the installation was completed to my satisfaction.';
 const FETCH_TIMEOUT_MS = 20000;
 const MAX_SIGNATURE_CHARS = 1400000;
+const PAGE_FALLBACK_W = 612;
+const PAGE_FALLBACK_H = 792;
 
 const HTML_ESCAPE = {
   '&': '&amp;',
@@ -23,20 +24,12 @@ let loadSeq = 0;
 let loaded = null;
 let activePad = null;
 let submitting = false;
-
-const FORMS = {
-  costco: {
-    title: 'Costco Installation Sign-Off',
-    lede: 'Review the details, then sign to confirm the work.',
-    body: costcoBody,
-  },
-};
+let padHasInk = false;
+let announceTimer = 0;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (ch) => HTML_ESCAPE[ch]);
 }
-
-let announceTimer = 0;
 
 function announce(message) {
   if (!announceEl) return;
@@ -53,22 +46,24 @@ function unmountPad() {
   activePad = null;
 }
 
+function cleanupForm() {
+  document.body.classList.remove('is-form', 'modal-open');
+  window.removeEventListener('resize', fitAllText);
+  document.removeEventListener('keydown', onEscape);
+  unmountPad();
+}
+
 function setTheme(test) {
   const theme = document.querySelector('meta[name="theme-color"]');
   if (theme) theme.setAttribute('content', test ? '#ffe500' : '#10283f');
 }
 
 function bannerHtml() {
-  return (
-    '<div class="test-banner" role="status">' +
-      '<p class="test-word">TEST</p>' +
-      '<p class="test-note">This is a test sign-off, not a live customer record.</p>' +
-    '</div>'
-  );
+  return '<div class="test-banner" role="status">TEST</div>';
 }
 
 function screen(options) {
-  unmountPad();
+  cleanupForm();
   const state = options.state;
   const title = options.title;
   const lede = options.lede || '';
@@ -106,36 +101,6 @@ function isTestRecord(data) {
   return !!(data && data.is_test === true) || !!(loaded && loaded.is_test === true);
 }
 
-function display(value) {
-  const raw = value == null ? '' : String(value).trim();
-  if (!raw) return '<span class="missing">Not provided</span>';
-  return escapeHtml(raw);
-}
-
-function phoneHref(value) {
-  const cleaned = String(value ?? '').replace(/[^\d+]/g, '');
-  const digits = cleaned.replace(/\D/g, '');
-  if (digits.length < 7 || digits.length > 15) return null;
-  return 'tel:' + cleaned;
-}
-
-function field(label, value, options) {
-  const opts = options || {};
-  const wide = opts.wide ? ' field-wide' : '';
-  const pre = opts.pre ? ' class="pre"' : '';
-  let shown = display(value);
-  if (opts.phone && String(value ?? '').trim()) {
-    const href = phoneHref(value);
-    if (href) shown = '<a href="' + escapeHtml(href) + '">' + shown + '</a>';
-  }
-  return (
-    '<div class="field' + wide + '">' +
-      '<dt>' + escapeHtml(label) + '</dt>' +
-      '<dd' + pre + '>' + shown + '</dd>' +
-    '</div>'
-  );
-}
-
 function formatWhen(value, mode) {
   if (value == null) return '';
   const raw = String(value).trim();
@@ -158,104 +123,44 @@ function formatWhen(value, mode) {
   }
 }
 
-function safeUrl(value) {
+function pacificStamp(date) {
+  const zone = { timeZone: 'America/Los_Angeles' };
+  return {
+    date: date.toLocaleDateString('en-US', Object.assign({ month: '2-digit', day: '2-digit', year: 'numeric' }, zone)),
+    time: date.toLocaleTimeString('en-US', Object.assign({ hour: 'numeric', minute: '2-digit', hour12: true }, zone)),
+  };
+}
+
+function httpsUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
   try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    const url = new URL(value.trim());
+    if (url.protocol !== 'https:') return null;
     return url.href;
   } catch {
     return null;
   }
 }
 
-function itemLines(items) {
-  const source = Array.isArray(items)
-    ? items
-    : (typeof items === 'string' ? items.split(/,\s*/) : []);
-  return source
-    .map((item) => {
-      if (item == null) return '';
-      if (typeof item === 'string' || typeof item === 'number') return String(item).trim();
-      return '';
-    })
-    .filter(Boolean);
-}
-
-function itemsHtml(items) {
-  const lines = itemLines(items);
-  if (!lines.length) return '<p class="missing">No items listed</p>';
-  return '<ul class="items">' + lines.map((line) => '<li>' + escapeHtml(line) + '</li>').join('') + '</ul>';
-}
-
-function pdfHtml(url) {
-  const safe = safeUrl(url);
-  if (!safe) return '';
-  const href = escapeHtml(safe);
-  return (
-    '<section class="card" aria-labelledby="doc-heading">' +
-      '<h2 id="doc-heading">Installation document</h2>' +
-      '<p class="pdf-actions"><a class="btn btn-secondary" id="pdf-link" href="' + href + '" target="_blank" rel="noopener noreferrer">Open the PDF</a></p>' +
-      '<iframe class="preview" id="pdf-frame" title="Installation document preview" src="' + href + '" referrerpolicy="no-referrer"></iframe>' +
-      '<p class="help spaced">If the preview is blank, use Open the PDF.</p>' +
-    '</section>'
-  );
-}
-
-function costcoBody(data) {
-  const fields = data.fields && typeof data.fields === 'object' ? data.fields : {};
-  const installDate = formatWhen(fields.install_date, 'date');
-  return (
-    '<a class="skip" href="#sign-heading">Skip to signature</a>' +
-    '<section class="card" aria-labelledby="details-heading">' +
-      '<h2 id="details-heading">Installation details</h2>' +
-      '<dl class="fields">' +
-        field('Customer name', fields.customer_name, { wide: true }) +
-        field('Phone', fields.phone, { phone: true }) +
-        field('Account number', fields.account_number) +
-        field('Store number', fields.store_number) +
-        field('Work order', fields.work_order) +
-        field('Install date', installDate || fields.install_date) +
-        field('Address', fields.address, { wide: true, pre: true }) +
-        field('Installer', fields.installer, { wide: true }) +
-      '</dl>' +
-      '<h3>Items installed</h3>' +
-      itemsHtml(fields.items) +
-    '</section>' +
-    pdfHtml(data.pdf_view_url) +
-    '<section class="card" aria-labelledby="sign-heading">' +
-      '<h2 id="sign-heading">Signature</h2>' +
-      '<form id="sign-form" novalidate>' +
-        '<p class="statement">' + escapeHtml(STATEMENT) + '</p>' +
-        '<p id="sign-help" class="help">Sign in the box with your finger. Submit stays off until a signature is drawn.</p>' +
-        '<div class="pad" id="signature-pad">' +
-          '<div class="pad-line" aria-hidden="true"></div>' +
-          '<p class="pad-hint" aria-hidden="true">Sign here</p>' +
-          '<canvas id="signature" width="320" height="200" draggable="false" aria-label="Signature drawing area" aria-describedby="sign-help">A signature box.</canvas>' +
-        '</div>' +
-        '<p id="form-error" class="form-error" role="alert" hidden></p>' +
-        '<div class="actions">' +
-          '<button type="button" class="btn btn-secondary" id="clear-signature">Clear</button>' +
-          '<button type="submit" class="btn btn-primary" id="submit-signature" disabled>Submit signature</button>' +
-        '</div>' +
-      '</form>' +
-    '</section>'
-  );
-}
-
 function renderLoading() {
-  screen({
-    state: 'loading',
-    title: 'Loading your sign-off',
-    lede: 'This usually takes a moment.',
-    busy: true,
-    test: !!(loaded && loaded.is_test === true),
-    body:
-      '<section class="card">' +
-        '<div class="spinner" aria-hidden="true"></div>' +
-        '<p class="help">If this stays here, enable JavaScript and reload this page.</p>' +
-      '</section>',
-  });
+  cleanupForm();
+  document.body.dataset.state = 'loading';
+  document.title = 'Loading your sign-off · MTS Installations';
+  setTheme(!!(loaded && loaded.is_test === true));
+  app.setAttribute('aria-busy', 'true');
+  app.replaceChildren();
+  if (loaded && loaded.is_test === true) {
+    const banner = document.createElement('div');
+    banner.className = 'test-banner';
+    banner.setAttribute('role', 'status');
+    banner.textContent = 'TEST';
+    app.appendChild(banner);
+  }
+  const note = document.createElement('p');
+  note.className = 'boot';
+  note.textContent = 'Loading your sign-off';
+  app.appendChild(note);
+  announce('Loading your sign-off');
 }
 
 function renderInvalid() {
@@ -349,7 +254,7 @@ function renderLoadError(message) {
 }
 
 function renderUnsupported(data) {
-  const kind = typeof data.form_type === 'string' && /^[a-z0-9_-]{1,40}$/i.test(data.form_type)
+  const kind = data && typeof data.form_type === 'string' && /^[a-z0-9_-]{1,40}$/i.test(data.form_type)
     ? data.form_type
     : '';
   const detail = kind
@@ -359,7 +264,7 @@ function renderUnsupported(data) {
     state: 'unsupported',
     title: "This form isn't available",
     lede: 'Please contact MTS Installations and ask them to resend the sign-off.',
-    test: data.is_test === true,
+    test: !!(data && data.is_test === true),
     body:
       '<section class="card status-card warn">' +
         '<h2>' + escapeHtml(detail) + '</h2>' +
@@ -367,21 +272,76 @@ function renderUnsupported(data) {
   });
 }
 
-function renderForm(data) {
-  const form = FORMS[data.form_type];
-  if (!form) {
-    renderUnsupported(data);
-    return;
+function pageAlt(pageNumber) {
+  if (Number(pageNumber) === 2) return 'Window Treatments Completion Verification';
+  if (Number(pageNumber) === 1) return 'Window Treatments Installation Authorization';
+  return 'Costco form page ' + String(pageNumber);
+}
+
+function positive(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function buildOverlay(overlay, pageW, pageH) {
+  if (!overlay || typeof overlay !== 'object') return null;
+  const x = Number(overlay.x);
+  const y = Number(overlay.y);
+  const w = Number(overlay.w);
+  const h = Number(overlay.h);
+  if (![x, y, w, h].every((n) => Number.isFinite(n))) return null;
+  const el = document.createElement('div');
+  el.className = 'overlay';
+  const key = typeof overlay.key === 'string' ? overlay.key : '';
+  el.dataset.key = key;
+  el.style.left = (x / pageW * 100) + '%';
+  el.style.top = (y / pageH * 100) + '%';
+  el.style.width = (w / pageW * 100) + '%';
+  el.style.height = (h / pageH * 100) + '%';
+  const label = typeof overlay.label === 'string' && overlay.label ? overlay.label : key;
+  if (key === 'signature') el.classList.add('is-signature');
+  if (overlay.fill_at_signing === true) {
+    el.dataset.fill = '1';
+    el.setAttribute('aria-label', label);
+    return el;
   }
-  submitting = false;
-  screen({
-    state: 'pending',
-    title: form.title,
-    lede: form.lede,
-    test: data.is_test === true,
-    body: form.body(data),
-  });
-  attachSignatureForm();
+  const value = overlay.value == null ? '' : String(overlay.value);
+  if (value) {
+    const span = document.createElement('span');
+    span.className = 'fit';
+    span.textContent = value;
+    el.appendChild(span);
+  }
+  el.setAttribute('aria-label', value ? label + ': ' + value : label);
+  return el;
+}
+
+function fitOne(el) {
+  const box = el.parentElement;
+  if (!box) return;
+  const style = window.getComputedStyle(box);
+  const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  const maxW = box.clientWidth - padX;
+  const maxH = box.clientHeight * 0.8;
+  if (maxW < 4 || maxH < 4) return;
+  let lo = 5;
+  let hi = Math.max(lo, maxH);
+  for (let i = 0; i < 12; i += 1) {
+    const mid = (lo + hi) / 2;
+    el.style.fontSize = mid + 'px';
+    if (el.scrollWidth <= maxW + 0.5) lo = mid;
+    else hi = mid;
+  }
+  el.style.fontSize = lo + 'px';
+}
+
+function fitAllText() {
+  document.querySelectorAll('.overlay .fit').forEach(fitOne);
+}
+
+function onImageError() {
+  if (document.body.dataset.state !== 'pending') return;
+  renderLoadError("The form image didn't load. Please try again.");
 }
 
 function setFormError(message) {
@@ -396,51 +356,299 @@ function setFormError(message) {
   el.textContent = message;
 }
 
-function attachSignatureForm() {
+function setSignButton(label, disabled) {
+  const button = document.getElementById('open-sign');
+  if (!button) return;
+  button.textContent = label;
+  button.disabled = disabled;
+}
+
+function renderPages(data) {
+  cleanupForm();
+  submitting = false;
+  const pages = (Array.isArray(data.pages) ? data.pages : [])
+    .filter((page) => page && typeof page === 'object')
+    .slice()
+    .sort((a, b) => Number(a.page) - Number(b.page));
+
+  const sheets = document.createElement('div');
+  sheets.className = 'sheets';
+  let rendered = 0;
+  pages.forEach((page) => {
+    const src = httpsUrl(page.image_url);
+    if (!src) return;
+    const pageW = positive(page.width, PAGE_FALLBACK_W);
+    const pageH = positive(page.height, PAGE_FALLBACK_H);
+    const sheet = document.createElement('section');
+    sheet.className = 'sheet';
+    sheet.style.aspectRatio = pageW + ' / ' + pageH;
+    const img = document.createElement('img');
+    img.className = 'page-image';
+    img.alt = pageAlt(page.page);
+    img.draggable = false;
+    img.referrerPolicy = 'no-referrer';
+    img.addEventListener('load', fitAllText);
+    img.addEventListener('error', onImageError);
+    img.src = src;
+    sheet.appendChild(img);
+    (Array.isArray(page.overlays) ? page.overlays : []).forEach((overlay) => {
+      const node = buildOverlay(overlay, pageW, pageH);
+      if (node) sheet.appendChild(node);
+    });
+    sheets.appendChild(sheet);
+    rendered += 1;
+  });
+
+  if (!rendered) {
+    renderUnsupported(data);
+    return;
+  }
+
+  document.body.dataset.state = 'pending';
+  document.body.classList.add('is-form');
+  document.title = 'Costco sign-off · MTS Installations';
+  setTheme(data.is_test === true);
+  app.setAttribute('aria-busy', 'false');
+  app.replaceChildren();
+
+  if (data.is_test === true) {
+    const banner = document.createElement('div');
+    banner.className = 'test-banner';
+    banner.setAttribute('role', 'status');
+    banner.textContent = 'TEST';
+    app.appendChild(banner);
+  }
+
+  const heading = document.createElement('h1');
+  heading.className = 'sr-only';
+  heading.textContent = 'Costco sign-off';
+  app.appendChild(heading);
+  app.appendChild(sheets);
+
+  const bar = document.createElement('div');
+  bar.className = 'sign-bar';
+  const error = document.createElement('p');
+  error.id = 'form-error';
+  error.className = 'form-error';
+  error.hidden = true;
+  error.setAttribute('role', 'alert');
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'btn btn-primary';
+  open.id = 'open-sign';
+  open.textContent = 'Sign';
+  open.addEventListener('click', openPad);
+  bar.append(error, open);
+  app.appendChild(bar);
+  app.appendChild(buildPadModal());
+
+  window.addEventListener('resize', fitAllText);
+  window.requestAnimationFrame(fitAllText);
+  window.scrollTo(0, 0);
+  heading.tabIndex = -1;
+  heading.focus({ preventScroll: true });
+  announce('Costco sign-off');
+}
+
+function buildPadModal() {
+  const modal = document.createElement('div');
+  modal.className = 'pad-modal';
+  modal.id = 'pad-modal';
+  modal.hidden = true;
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'pad-title');
+
+  const title = document.createElement('h2');
+  title.id = 'pad-title';
+  title.textContent = 'Sign both pages';
+
+  const help = document.createElement('p');
+  help.id = 'sign-help';
+  help.className = 'help';
+  help.textContent = 'Sign with your finger.';
+
+  const pad = document.createElement('div');
+  pad.className = 'pad';
+  pad.id = 'signature-pad';
+  const line = document.createElement('div');
+  line.className = 'pad-line';
+  line.setAttribute('aria-hidden', 'true');
+  const hint = document.createElement('p');
+  hint.className = 'pad-hint';
+  hint.setAttribute('aria-hidden', 'true');
+  hint.textContent = 'Sign here';
+  const canvas = document.createElement('canvas');
+  canvas.id = 'signature';
+  canvas.width = 320;
+  canvas.height = 200;
+  canvas.draggable = false;
+  canvas.setAttribute('aria-label', 'Signature drawing area');
+  canvas.setAttribute('aria-describedby', 'sign-help');
+  canvas.textContent = 'A signature box.';
+  pad.append(line, hint, canvas);
+
+  const padError = document.createElement('p');
+  padError.id = 'pad-error';
+  padError.className = 'form-error';
+  padError.hidden = true;
+  padError.setAttribute('role', 'alert');
+
+  const actions = document.createElement('div');
+  actions.className = 'pad-actions';
+  const row = document.createElement('div');
+  row.className = 'row';
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'btn btn-secondary';
+  clear.id = 'clear-signature';
+  clear.textContent = 'Clear';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-secondary';
+  cancel.id = 'cancel-sign';
+  cancel.textContent = 'Cancel';
+  row.append(clear, cancel);
+  const confirm = document.createElement('button');
+  confirm.type = 'button';
+  confirm.className = 'btn btn-primary';
+  confirm.id = 'submit-signature';
+  confirm.textContent = 'Sign both pages';
+  confirm.disabled = true;
+  actions.append(row, confirm);
+
+  modal.append(title, help, pad, padError, actions);
+  clear.addEventListener('click', clearPad);
+  cancel.addEventListener('click', closePad);
+  confirm.addEventListener('click', confirmSign);
+  return modal;
+}
+
+function setPadError(message) {
+  const el = document.getElementById('pad-error');
+  if (!el) return;
+  if (!message) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.hidden = false;
+  el.textContent = message;
+}
+
+function syncPadButtons() {
+  const submitBtn = document.getElementById('submit-signature');
+  const clearBtn = document.getElementById('clear-signature');
+  const padEl = document.getElementById('signature-pad');
+  if (submitBtn) {
+    submitBtn.disabled = submitting || !padHasInk;
+    submitBtn.textContent = 'Sign both pages';
+  }
+  if (clearBtn) clearBtn.disabled = submitting;
+  if (padEl) padEl.classList.toggle('is-locked', submitting);
+}
+
+function onEscape(event) {
+  if (event.key === 'Escape') closePad();
+}
+
+function openPad() {
+  if (submitting) return;
+  const modal = document.getElementById('pad-modal');
   const canvas = document.getElementById('signature');
   const padEl = document.getElementById('signature-pad');
-  const form = document.getElementById('sign-form');
-  const clearBtn = document.getElementById('clear-signature');
-  const submitBtn = document.getElementById('submit-signature');
-  if (!canvas || !padEl || !form || !clearBtn || !submitBtn) return;
+  if (!modal || !canvas || !padEl) return;
   if (!canvas.getContext('2d')) {
     setFormError('This browser cannot record a signature in the box.');
     return;
   }
-
-  let hasInk = false;
-  activePad = createSignaturePad(canvas, () => {
-    if (hasInk) return;
-    hasInk = true;
-    padEl.classList.add('has-ink');
-    syncButtons();
-    announce('Signature captured');
+  unmountPad();
+  padHasInk = false;
+  padEl.classList.remove('has-ink');
+  setPadError('');
+  modal.hidden = false;
+  document.body.classList.add('modal-open');
+  document.addEventListener('keydown', onEscape);
+  window.requestAnimationFrame(() => {
+    if (modal.hidden) return;
+    activePad = createSignaturePad(canvas, () => {
+      if (padHasInk) return;
+      padHasInk = true;
+      padEl.classList.add('has-ink');
+      syncPadButtons();
+      announce('Signature captured');
+    });
+    syncPadButtons();
   });
+  if (!modal.hasAttribute('tabindex')) modal.tabIndex = -1;
+  modal.focus({ preventScroll: true });
+}
 
-  function syncButtons() {
-    submitBtn.disabled = submitting || !hasInk;
-    submitBtn.textContent = submitting ? 'Submitting...' : 'Submit signature';
-    clearBtn.disabled = submitting;
-    padEl.classList.toggle('is-locked', submitting);
+function clearPad() {
+  if (submitting || !activePad) return;
+  activePad.clear();
+  padHasInk = false;
+  const padEl = document.getElementById('signature-pad');
+  if (padEl) padEl.classList.remove('has-ink');
+  setPadError('');
+  syncPadButtons();
+  announce('Signature cleared');
+}
+
+function closePad() {
+  const modal = document.getElementById('pad-modal');
+  if (modal) modal.hidden = true;
+  document.body.classList.remove('modal-open');
+  document.removeEventListener('keydown', onEscape);
+  unmountPad();
+  padHasInk = false;
+  const opener = document.getElementById('open-sign');
+  if (opener) opener.focus({ preventScroll: true });
+}
+
+function paintSigning(signature) {
+  const stamp = pacificStamp(new Date());
+  document.querySelectorAll('.overlay').forEach((el) => {
+    const key = el.dataset.key;
+    if (key === 'signature') {
+      el.classList.add('filled');
+      el.replaceChildren();
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = signature;
+      el.appendChild(img);
+      el.setAttribute('aria-label', 'Member signature');
+      return;
+    }
+    if (key !== 'date' && key !== 'time') return;
+    const span = document.createElement('span');
+    span.className = 'fit';
+    span.textContent = key === 'date' ? stamp.date : stamp.time;
+    el.replaceChildren(span);
+    el.setAttribute('aria-label', (key === 'date' ? 'Date: ' : 'Time: ') + span.textContent);
+  });
+  fitAllText();
+}
+
+async function confirmSign() {
+  if (submitting || !padHasInk || !activePad) return;
+  let signature = null;
+  try {
+    signature = normalizePngDataUrl(activePad.toDataUrl());
+  } catch {
+    signature = null;
   }
-
-  clearBtn.addEventListener('click', () => {
-    if (submitting || !activePad) return;
-    activePad.clear();
-    hasInk = false;
-    padEl.classList.remove('has-ink');
-    setFormError('');
-    syncButtons();
-    announce('Signature cleared');
-  });
-
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    if (submitting || !hasInk || !activePad) return;
-    submitSignature(activePad, syncButtons);
-  });
-
-  syncButtons();
+  if (!signature) {
+    setPadError('We could not read that signature. Clear it and sign again.');
+    return;
+  }
+  submitting = true;
+  syncPadButtons();
+  closePad();
+  setSignButton('Signing...', true);
+  setFormError('');
+  paintSigning(signature);
+  await postSignature(signature);
 }
 
 function createSignaturePad(canvas, onInk) {
@@ -647,14 +855,45 @@ function createSignaturePad(canvas, onInk) {
   layout();
 
   function toDataUrl() {
+    const width = canvas.width;
+    const height = canvas.height;
+    let pixels;
+    try {
+      pixels = context.getImageData(0, 0, width, height).data;
+    } catch {
+      return '';
+    }
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const i = (y * width + x) * 4;
+        if (pixels[i + 3] < 16) continue;
+        if (pixels[i] > 246 && pixels[i + 1] > 246 && pixels[i + 2] > 246) continue;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return '';
+    const padPx = Math.max(4, Math.round(8 * ratio));
+    minX = Math.max(0, minX - padPx);
+    minY = Math.max(0, minY - padPx);
+    maxX = Math.min(width - 1, maxX + padPx);
+    maxY = Math.min(height - 1, maxY + padPx);
+    const cropW = maxX - minX + 1;
+    const cropH = maxY - minY + 1;
     const offscreen = document.createElement('canvas');
-    offscreen.width = canvas.width;
-    offscreen.height = canvas.height;
+    offscreen.width = cropW;
+    offscreen.height = cropH;
     const off = offscreen.getContext('2d');
     if (!off) return '';
     off.fillStyle = '#ffffff';
-    off.fillRect(0, 0, offscreen.width, offscreen.height);
-    off.drawImage(canvas, 0, 0);
+    off.fillRect(0, 0, cropW, cropH);
+    off.drawImage(canvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
     return offscreen.toDataURL('image/png');
   }
 
@@ -703,25 +942,7 @@ function submitMessage(status) {
   return "We couldn't submit your signature. Check your connection and try again.";
 }
 
-async function submitSignature(pad, syncButtons) {
-  if (submitting) return;
-  submitting = true;
-  syncButtons();
-  setFormError('');
-
-  let signature;
-  try {
-    signature = normalizePngDataUrl(pad.toDataUrl());
-  } catch {
-    signature = null;
-  }
-  if (!signature) {
-    submitting = false;
-    syncButtons();
-    setFormError('We could not read that signature. Clear it and sign again.');
-    return;
-  }
-
+async function postSignature(signature) {
   let response;
   try {
     response = await fetchWithTimeout(API_BASE, {
@@ -738,7 +959,7 @@ async function submitSignature(pad, syncButtons) {
     });
   } catch (error) {
     submitting = false;
-    syncButtons();
+    setSignButton('Sign', false);
     const timedOut = error && error.name === 'AbortError';
     setFormError(timedOut
       ? 'The request timed out. Check your connection and try again.'
@@ -768,8 +989,8 @@ async function submitSignature(pad, syncButtons) {
   }
 
   submitting = false;
-  syncButtons();
-  if (!document.getElementById('sign-form')) return;
+  if (!document.getElementById('open-sign')) return;
+  setSignButton('Sign', false);
   setFormError(body
     ? submitMessage(response.status)
     : 'The sign-off service sent an unexpected response. Please try again.');
@@ -802,6 +1023,10 @@ function fetchWithTimeout(url, options) {
     .finally(() => window.clearTimeout(timer));
 }
 
+function hasPages(data) {
+  return Array.isArray(data.pages) && data.pages.length > 0;
+}
+
 async function handleLoadResponse(response, seq) {
   if (response.status === 404) {
     renderInvalid();
@@ -829,7 +1054,11 @@ async function handleLoadResponse(response, seq) {
     return;
   }
   loaded = data;
-  renderForm(data);
+  if (!hasPages(data)) {
+    renderUnsupported(data);
+    return;
+  }
+  renderPages(data);
 }
 
 async function load() {
