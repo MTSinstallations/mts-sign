@@ -1,7 +1,7 @@
 'use strict';
 
-// Point this at another host when production sign-off moves.
-const API_BASE = 'https://djduaqegxwjnmjlzjdor.supabase.co/functions/v1/test-signoff-sign';
+// Production job-linked sign-off API; token-bearing URLs contain no customer fields.
+const API_BASE = 'https://djduaqegxwjnmjlzjdor.supabase.co/functions/v1/costco-signoff-sign';
 
 const FETCH_TIMEOUT_MS = 20000;
 const MAX_SIGNATURE_CHARS = 1400000;
@@ -174,6 +174,16 @@ function renderInvalid() {
         '<h2>The link did not match a sign-off</h2>' +
         '<p class="help spaced">Nothing was signed.</p>' +
       '</section>',
+  });
+}
+
+function renderProcessing() {
+  screen({
+    state: 'processing',
+    title: 'Your signature is being checked',
+    lede: 'Please contact MTS Installations if this message remains. Do not sign again.',
+    test: isTestRecord(null),
+    body: '<section class="card status-card warn"><h2>Confirmation is pending</h2><p class="help spaced">We have not yet confirmed that your signed form was saved.</p></section>',
   });
 }
 
@@ -968,7 +978,11 @@ async function postSignature(signature) {
   }
 
   const body = await parseJson(response);
-  if (response.status === 409 || (body && body.error === 'already_signed')) {
+  if (body && body.status === 'processing') {
+    renderProcessing();
+    return;
+  }
+  if (body && (body.status === 'signed' || body.error === 'already_signed') && !response.ok) {
     renderAlreadySigned({
       is_test: !!(loaded && loaded.is_test === true),
       signed_at: body && body.signed_at,
@@ -1044,7 +1058,12 @@ async function handleLoadResponse(response, seq) {
     renderExpired();
     return;
   }
-  if (response.status === 409 || data.status === 'signed') {
+  if (data.status === 'processing') {
+    loaded = data;
+    renderProcessing();
+    return;
+  }
+  if (data.status === 'signed') {
     loaded = data;
     renderAlreadySigned(data);
     return;
